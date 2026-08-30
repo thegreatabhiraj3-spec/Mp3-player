@@ -116,6 +116,61 @@ body {
 
 .smart-eyebrow { padding: 0 6px; margin-bottom: 8px; }
 
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 4px 12px 8px;
+}
+.section-header .eyebrow { margin-bottom: 0; }
+
+#playlists-section { margin-bottom: 4px; }
+
+.playlist-card {
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+}
+.playlist-play-hit {
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--paper);
+  padding: 14px 16px 6px;
+  cursor: pointer;
+  width: 100%;
+}
+.playlist-card-actions {
+  display: flex;
+  gap: 2px;
+  padding: 0 6px 6px;
+  justify-content: flex-end;
+}
+.playlist-card-actions .icon-btn { width: 32px; height: 32px; font-size: 0.88rem; }
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 0.9rem;
+}
+.check-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brass);
+  flex-shrink: 0;
+}
+#playlist-song-checks {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+
 .smart-row {
   display: flex;
   gap: 10px;
@@ -377,6 +432,14 @@ body {
   <div id="analysis-status" class="hidden"></div>
   <div id="smart-playlists" class="hidden"></div>
 
+  <div id="playlists-section">
+    <div class="section-header">
+      <span class="eyebrow">Your playlists</span>
+      <button id="new-playlist-btn" class="btn-link">+ New</button>
+    </div>
+    <div id="user-playlists" class="smart-row"></div>
+  </div>
+
   <main id="library-list" class="library"></main>
 
   <div id="now-playing-bar" class="now-playing hidden">
@@ -420,12 +483,30 @@ body {
     </div>
   </div>
 
+  <div id="playlist-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2 id="playlist-form-title">New playlist</h2>
+      <div class="field">
+        <label>Playlist name</label>
+        <input type="text" id="playlist-name-input" placeholder="e.g. Long drive">
+      </div>
+      <div class="field">
+        <label>Songs</label>
+        <div id="playlist-song-checks"></div>
+      </div>
+      <div class="modal-actions">
+        <button id="cancel-playlist-btn" class="btn-secondary">Cancel</button>
+        <button id="save-playlist-btn" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
   <audio id="audio-el"></audio>
 
 <script>
 // ===== IndexedDB layer =====
 const DB_NAME = 'myMusicDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbPromise = null;
 
 function getDB() {
@@ -436,6 +517,9 @@ function getDB() {
       const db = e.target.result;
       if (!db.objectStoreNames.contains('songs')) {
         db.createObjectStore('songs', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('playlists')) {
+        db.createObjectStore('playlists', { keyPath: 'id' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -748,7 +832,7 @@ function renderSmartPlaylists() {
   }
 
   container.classList.remove('hidden');
-   container.innerHTML =
+  container.innerHTML =
     '<div class="eyebrow smart-eyebrow">Auto playlists</div><div class="smart-row">' +
     defs
       .map(
@@ -929,8 +1013,10 @@ class Player {
 // ===== App state & wiring =====
 let player;
 let songs = [];
+let playlists = [];
 let pendingFile = null;
 let editingId = null;
+let editingPlaylistId = null;
 
 async function loadLibrary() {
   songs = await dbGetAll('songs');
@@ -973,6 +1059,7 @@ function renderLibrary() {
         await dbDelete('songs', btn.dataset.id);
         await loadLibrary();
         renderSmartPlaylists();
+        renderPlaylists();
       }
     });
   });
@@ -983,6 +1070,125 @@ function renderLibrary() {
       openForm(song);
     });
   });
+}
+
+// ===== User playlists =====
+async function loadPlaylists() {
+  playlists = await dbGetAll('playlists');
+  playlists.sort((a, b) => b.createdAt - a.createdAt);
+  renderPlaylists();
+}
+
+function renderPlaylists() {
+  const container = document.getElementById('user-playlists');
+  if (playlists.length === 0) {
+    container.innerHTML = '<div class="hint" style="padding:8px 6px;">No playlists yet — tap "+ New" to make one.</div>';
+    return;
+  }
+  container.innerHTML = playlists
+    .map((p) => {
+      const validSongs = p.songIds.map((id) => songs.find((s) => s.id === id)).filter(Boolean);
+      return (
+        '<div class="smart-card playlist-card">' +
+        '<button class="playlist-play-hit" data-id="' +
+        p.id +
+        '"><div class="smart-label">' +
+        escapeHtml(p.name) +
+        '</div><div class="smart-count">' +
+        validSongs.length +
+        ' songs</div></button>' +
+        '<div class="playlist-card-actions">' +
+        '<button class="icon-btn playlist-edit-btn" data-id="' +
+        p.id +
+        '" aria-label="Edit playlist">&#9998;</button>' +
+        '<button class="icon-btn delete-btn playlist-delete-btn" data-id="' +
+        p.id +
+        '" aria-label="Delete playlist">&#10005;</button>' +
+        '</div></div>'
+      );
+    })
+    .join('');
+
+  container.querySelectorAll('.playlist-play-hit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const p = playlists.find((pl) => pl.id === btn.dataset.id);
+      const validSongs = p.songIds.map((id) => songs.find((s) => s.id === id)).filter(Boolean);
+      if (validSongs.length > 0) player.setQueue(validSongs, validSongs[0].id);
+    });
+  });
+  container.querySelectorAll('.playlist-edit-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const p = playlists.find((pl) => pl.id === btn.dataset.id);
+      openPlaylistForm(p);
+    });
+  });
+  container.querySelectorAll('.playlist-delete-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm('Delete this playlist? Your songs are not affected.')) {
+        await dbDelete('playlists', btn.dataset.id);
+        await loadPlaylists();
+      }
+    });
+  });
+}
+
+function openPlaylistForm(existingPlaylist) {
+  editingPlaylistId = existingPlaylist ? existingPlaylist.id : null;
+  document.getElementById('playlist-form-title').textContent = existingPlaylist ? 'Edit playlist' : 'New playlist';
+  document.getElementById('playlist-name-input').value = existingPlaylist ? existingPlaylist.name : '';
+  const selectedIds = existingPlaylist ? existingPlaylist.songIds : [];
+  const checkWrap = document.getElementById('playlist-song-checks');
+  if (songs.length === 0) {
+    checkWrap.innerHTML = '<div class="hint">Add some songs to your library first.</div>';
+  } else {
+    checkWrap.innerHTML = songs
+      .map((s) => {
+        const checked = selectedIds.indexOf(s.id) !== -1 ? 'checked' : '';
+        const artistText = s.artists && s.artists.length ? ' — ' + escapeHtml(s.artists.join(', ')) : '';
+        return (
+          '<label class="check-row"><input type="checkbox" class="playlist-song-check" value="' +
+          s.id +
+          '" ' +
+          checked +
+          '><span>' +
+          escapeHtml(s.name) +
+          artistText +
+          '</span></label>'
+        );
+      })
+      .join('');
+  }
+  document.getElementById('playlist-modal').classList.remove('hidden');
+}
+
+function closePlaylistForm() {
+  document.getElementById('playlist-modal').classList.add('hidden');
+  editingPlaylistId = null;
+}
+
+async function savePlaylist() {
+  const name = document.getElementById('playlist-name-input').value.trim();
+  if (!name) {
+    alert('Enter a playlist name first.');
+    return;
+  }
+  const songIds = Array.from(document.querySelectorAll('.playlist-song-check:checked')).map((cb) => cb.value);
+  if (songIds.length === 0) {
+    alert('Pick at least one song.');
+    return;
+  }
+  const existing = editingPlaylistId ? playlists.find((p) => p.id === editingPlaylistId) : null;
+  const playlist = {
+    id: editingPlaylistId || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()),
+    name: name,
+    songIds: songIds,
+    createdAt: existing ? existing.createdAt : Date.now(),
+  };
+  await dbPut('playlists', playlist);
+  closePlaylistForm();
+  await loadPlaylists();
 }
 
 function addArtistField(value) {
@@ -1111,12 +1317,17 @@ function wireUI() {
   document.getElementById('repeat-btn').addEventListener('click', () => player.toggleRepeat());
   document.getElementById('skip-back-btn').addEventListener('click', () => player.skip(-10));
   document.getElementById('skip-fwd-btn').addEventListener('click', () => player.skip(10));
+
+  document.getElementById('new-playlist-btn').addEventListener('click', () => openPlaylistForm(null));
+  document.getElementById('cancel-playlist-btn').addEventListener('click', closePlaylistForm);
+  document.getElementById('save-playlist-btn').addEventListener('click', savePlaylist);
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
   initPlayer();
   wireUI();
   await loadLibrary();
+  await loadPlaylists();
   renderSmartPlaylists();
   songs.filter((s) => s.tempo == null).forEach((s) => enqueueAnalysis(s.id));
   if ('serviceWorker' in navigator) {
@@ -1128,4 +1339,4 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 </script>
 </body>
-</html> 
+</html>
