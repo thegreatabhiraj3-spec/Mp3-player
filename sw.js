@@ -1,4 +1,4 @@
-const CACHE_NAME = 'my-music-v1';
+const CACHE_NAME = 'my-music-v3';
 const ASSETS = ['index.html', 'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -18,7 +18,6 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Audio files live in IndexedDB, not here — this only serves the app shell.
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request).catch(() => caches.match('index.html'))
